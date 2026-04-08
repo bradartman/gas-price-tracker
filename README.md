@@ -1,9 +1,9 @@
 # ⛽ Gas Price Tracker — Setup Guide
 
-Fetches daily 87-octane gas prices for ZIP codes **60014** and **60012** using Selenium**, saves them to a local CSV, and emails you a formatted
+Fetches daily 87-octane gas prices for ZIP codes **60014** and **60012** using the
+**Google Maps Places API**, saves them to a local CSV, and emails you a formatted
 report at 7 AM every day.
 
-Update with your own zip codes for searching
 ---
 
 ## 1. Install Python
