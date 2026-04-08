@@ -1,7 +1,8 @@
 # ⛽ Gas Price Tracker — Setup Guide
 
-Fetches daily 87-octane gas prices for ZIP codes **60014** and **60012**,
-saves them to a local CSV, and emails you a formatted report at 7 AM every day.
+Fetches daily 87-octane gas prices for ZIP codes **60014** and **60012** using the
+**Google Maps Places API**, saves them to a local CSV, and emails you a formatted
+report at 7 AM every day.
 
 ---
 
@@ -22,7 +23,25 @@ pip install -r requirements.txt
 
 ---
 
-## 3. Configure
+## 3. Get a Google Maps API Key
+
+1. Go to https://console.cloud.google.com
+2. Create a new project (e.g. "Gas Tracker")
+3. Go to **APIs & Services → Library** and enable these two APIs:
+   - **Places API**
+   - **Geocoding API**
+4. Go to **APIs & Services → Credentials → Create Credentials → API Key**
+5. Copy the key — you'll paste it into `config.json`
+
+> 💡 **Cost:** Google gives you $200/month free credit. This script makes ~30 API
+> calls per day (15 stations × 2 ZIPs), which costs well under $1/month — effectively free.
+
+> 🔒 **Optional security:** In the API key settings, restrict the key to only the
+> Places API and Geocoding API so it can't be misused if leaked.
+
+---
+
+## 4. Configure
 
 ```bash
 cp config.example.json config.json
@@ -32,6 +51,7 @@ Open `config.json` and fill in:
 
 | Field | What to put |
 |-------|-------------|
+| `google_maps_api_key` | The API key from Step 3 |
 | `email.sender` | Your Gmail address |
 | `email.recipient` | Where to send the report (can be same address) |
 | `email.app_password` | A Gmail App Password (NOT your regular password — see below) |
@@ -41,22 +61,26 @@ Open `config.json` and fill in:
 1. Go to https://myaccount.google.com/security
 2. Enable **2-Step Verification** (required)
 3. Go to https://myaccount.google.com/apppasswords
-4. Create an app password → Name it "Gas Tracker"
+4. Create an app password → name it "Gas Tracker"
 5. Copy the 16-character password into `config.json`
 
 ---
 
-## 4. Test It
+## 5. Test It
 
 ```bash
 python gas_tracker.py
 ```
 
-You should see prices fetched and an email arrive in your inbox.
+You should see stations fetched and an email arrive in your inbox.
+
+> **Note on prices showing N/A:** Google Maps has fuel prices for many stations,
+> but not all. Stations that haven't reported prices to Google will show "N/A".
+> This is normal — typically 50–80% of stations will have prices.
 
 ---
 
-## 5. Schedule at 7 AM Daily
+## 6. Schedule at 7 AM Daily
 
 ### Windows (Task Scheduler)
 
@@ -76,7 +100,7 @@ You should see prices fetched and an email arrive in your inbox.
 crontab -e
 ```
 
-Add this line (update the path):
+Add this line (update the path to your folder):
 
 ```
 0 7 * * * /usr/bin/python3 /path/to/gas_tracker/gas_tracker.py >> /path/to/gas_tracker/cron.log 2>&1
@@ -84,7 +108,7 @@ Add this line (update the path):
 
 ---
 
-## 6. CSV Database
+## 7. CSV Database
 
 Prices are automatically appended to `gas_prices.csv` each run:
 
@@ -92,22 +116,20 @@ Prices are automatically appended to `gas_prices.csv` each run:
 date,zip,station,address,price_87
 2025-04-08,60014,Shell,1234 Main St Crystal Lake IL,3.259
 2025-04-08,60012,BP,5678 Elm Ave Crystal Lake IL,3.299
-...
 ```
 
-You can open this in Excel or Google Sheets anytime for historical tracking.
+Open this in Excel or Google Sheets anytime for historical tracking.
 
 ---
 
-## 7. Optional: Google Sheets Integration
+## 8. Optional: Google Sheets Integration
 
 To *also* log to a Google Sheet automatically:
 
-1. Go to https://console.cloud.google.com
-2. Create a project → Enable **Google Sheets API**
-3. Create a **Service Account** → Download the JSON key → save as `service_account.json` in this folder
-4. Share your Google Sheet with the service account email (Editor access)
-5. In `config.json` set:
+1. In Google Cloud Console, enable the **Google Sheets API**
+2. Create a **Service Account** → Download the JSON key → save as `service_account.json` in this folder
+3. Share your Google Sheet with the service account email (give it Editor access)
+4. In `config.json` set:
    ```json
    "google_sheets": {
      "enabled": true,
@@ -115,7 +137,7 @@ To *also* log to a Google Sheet automatically:
      "service_account_json": "service_account.json"
    }
    ```
-6. Install extra libraries:
+5. Install extra libraries:
    ```bash
    pip install google-auth google-auth-httplib2 google-api-python-client
    ```
@@ -126,7 +148,8 @@ To *also* log to a Google Sheet automatically:
 
 | Problem | Fix |
 |---------|-----|
-| No stations found | GasBuddy may have changed their layout — check your internet, try again |
-| Email not sending | Double-check App Password; make sure 2FA is on |
+| `REQUEST_DENIED` from API | Check your API key is correct and Places/Geocoding APIs are enabled |
+| All prices show N/A | Normal for some stations — Google doesn't have prices for all locations |
+| Email not sending | Double-check Gmail App Password; make sure 2FA is on |
 | `ModuleNotFoundError` | Run `pip install -r requirements.txt` again |
 | Windows: script doesn't run at 7am | In Task Scheduler, check "Run whether user is logged on or not" |

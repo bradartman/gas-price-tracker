@@ -3,6 +3,8 @@
 
   "zip_codes": ["60014", "60012"],
 
+  "google_maps_api_key": "YOUR_GOOGLE_MAPS_API_KEY_HERE",
+
   "email": {
     "sender": "your.gmail@gmail.com",
     "recipient": "your.gmail@gmail.com",
@@ -11,7 +13,7 @@
 
   "google_sheets": {
     "enabled": false,
-    "_comment_enabled": "Set to true to also log to Google Sheets (requires extra setup — see README)",
+    "_comment": "Set enabled to true to also log to Google Sheets (requires extra setup — see README)",
     "spreadsheet_id": "YOUR_GOOGLE_SHEET_ID_HERE",
     "service_account_json": "service_account.json"
   }
