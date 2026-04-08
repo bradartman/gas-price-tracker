@@ -1,0 +1,6 @@
+requests
+beautifulsoup4
+# Optional — only needed if google_sheets.enabled = true in config.json:
+# google-auth
+# google-auth-httplib2
+# google-api-python-client

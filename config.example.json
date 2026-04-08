@@ -1,0 +1,18 @@
+{
+  "_comment": "Copy this file to config.json and fill in your details.",
+
+  "zip_codes": ["60014", "60012"],
+
+  "email": {
+    "sender": "your.gmail@gmail.com",
+    "recipient": "your.gmail@gmail.com",
+    "app_password": "xxxx xxxx xxxx xxxx"
+  },
+
+  "google_sheets": {
+    "enabled": false,
+    "_comment_enabled": "Set to true to also log to Google Sheets (requires extra setup — see README)",
+    "spreadsheet_id": "YOUR_GOOGLE_SHEET_ID_HERE",
+    "service_account_json": "service_account.json"
+  }
+}
