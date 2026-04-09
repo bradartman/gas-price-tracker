@@ -68,8 +68,6 @@ def fetch_stations_for_zip(zip_code: str, driver: webdriver.Chrome) -> list[dict
 
     import re
     stations = []
-    addr_re  = re.compile(r'^\d+\s+\S', re.MULTILINE)
-    price_re = re.compile(r'\$\s*[2-9]\.\d{2}')
 
     def _is_price_el(el):
         try:
@@ -78,21 +76,34 @@ def fetch_stations_for_zip(zip_code: str, driver: webdriver.Chrome) -> list[dict
         except Exception:
             return False
 
-    # Anchor on confirmed price elements, then walk UP to find the per-station wrapper.
-    # GasBuddy separates station info and price into sibling DOM trees, but they share
-    # a common ancestor (the station list-item). We find that ancestor by navigating up
-    # until we hit an element that (a) contains a street address and (b) has ≤ 2 prices
-    # (so we haven't gone past the per-station boundary into the whole list).
+    # --- Step 1: collect valid station cards ---
+    # Run _parse_card_text on every StationDisplay element; keep only those
+    # that yield both a name AND an address. This filters out:
+    #   • sub-elements (star ratings only → no name or address)
+    #   • price containers (username/time text → no valid name or address)
+    all_display_els = driver.find_elements(By.CSS_SELECTOR, "[class*='StationDisplay']")
+    station_data = []   # list of (name, address) in page order
+    seen_keys    = set()
+    for el in all_display_els:
+        n, a = _parse_card_text(el.text)
+        if n and a:
+            key = (n.lower(), a.lower())
+            if key not in seen_keys:
+                seen_keys.add(key)
+                station_data.append((n, a))
+
+    # --- Step 2: collect price elements ---
     price_els = driver.find_elements(By.CSS_SELECTOR, "[class*='StationDisplayPrice-module__price']")
     price_els = [el for el in price_els if _is_price_el(el)]
-    print(f"    Found {len(price_els)} price elements")
 
+    print(f"    Found {len(station_data)} station cards, {len(price_els)} price elements")
+
+    # --- Step 3: pair by index ---
     seen = set()
-
-    for price_el in price_els:
-        try:
-            raw = (price_el.get_attribute("textContent") or "").strip().lstrip("$")
-            price_87 = "N/A"
+    for i, (name, address) in enumerate(station_data):
+        price_87 = "N/A"
+        if i < len(price_els):
+            raw = (price_els[i].get_attribute("textContent") or "").strip().lstrip("$")
             try:
                 val = float(raw)
                 if 1.5 < val < 10.0:
@@ -100,72 +111,16 @@ def fetch_stations_for_zip(zip_code: str, driver: webdriver.Chrome) -> list[dict
             except ValueError:
                 pass
 
-            station_text = ""
-
-            # Strategy 1: walk up to the belt/price container, then grab its
-            # preceding sibling — that should be the station info card.
-            for levels in range(1, 10):
-                xpath = "/".join([".."] * levels)
-                try:
-                    parent = price_el.find_element(By.XPATH, xpath)
-                    cls = (parent.get_attribute("class") or "").lower()
-                    if "belt" in cls or "pricecard" in cls or "pricecontainer" in cls:
-                        try:
-                            sibling = parent.find_element(By.XPATH, "preceding-sibling::*[1]")
-                            t = sibling.text
-                            if addr_re.search(t):
-                                station_text = t
-                        except Exception:
-                            pass
-                        break  # found the belt level — stop regardless
-                except Exception:
-                    break
-
-            # Strategy 2: enclosing <li> (works if GasBuddy wraps each row in <li>)
-            if not station_text:
-                try:
-                    li = price_el.find_element(By.XPATH, "ancestor::li[1]")
-                    t  = li.text
-                    if addr_re.search(t) and len(price_re.findall(t)) <= 3:
-                        station_text = t
-                except Exception:
-                    pass
-
-            # Strategy 3: walk up to smallest ancestor with address + ≤ 3 prices
-            if not station_text:
-                for levels in range(2, 12):
-                    try:
-                        xpath  = "/".join([".."] * levels)
-                        parent = price_el.find_element(By.XPATH, xpath)
-                        t      = parent.text
-                        if addr_re.search(t) and len(price_re.findall(t)) <= 3:
-                            station_text = t
-                            break
-                    except Exception:
-                        break
-
-            if not station_text:
-                continue
-
-            name, address = _parse_card_text(station_text)
-            name    = (name or "Unknown").strip()
-            address = (address or "Unknown").strip()
-            if name == "Unknown" and address == "Unknown":
-                continue
-
-            key = name.lower() if address == "Unknown" else (name.lower(), address.lower())
-            if key in seen:
-                continue
-            seen.add(key)
-            seen.add(name.lower())
-            stations.append({
-                "zip":      zip_code,
-                "station":  name,
-                "address":  address,
-                "price_87": price_87,
-            })
-        except Exception as e:
-            print(f"    [warn] {e}")
+        key = (name.lower(), address.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        stations.append({
+            "zip":      zip_code,
+            "station":  name,
+            "address":  address,
+            "price_87": price_87,
+        })
             continue
 
     return stations
