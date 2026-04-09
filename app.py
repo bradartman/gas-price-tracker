@@ -35,13 +35,9 @@ def fetch_prices():
     except SystemExit:
         return jsonify({"error": "config.json not found. Please create it from config.example.json."}), 500
 
-    api_key = config.get("google_maps_api_key", "")
-    if not api_key or api_key == "YOUR_GOOGLE_MAPS_API_KEY_HERE":
-        return jsonify({"error": "google_maps_api_key is missing or not set in config.json."}), 500
-
     zip_codes = config.get("zip_codes", ["60014", "60012"])
 
-    stations = fetch_all_stations(zip_codes, api_key)
+    stations = fetch_all_stations(zip_codes)
     if not stations:
         return jsonify({"error": "No stations found. Check your API key and internet connection."}), 502
 
