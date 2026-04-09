@@ -35,7 +35,12 @@ def fetch_prices():
     except SystemExit:
         return jsonify({"error": "config.json not found. Please create it from config.example.json."}), 500
 
-    zip_codes = config.get("zip_codes", ["60014", "60012"])
+    # ZIP codes can come from the request body (UI input) or fall back to config
+    body = request.get_json(silent=True) or {}
+    zip_codes = body.get("zip_codes") or config.get("zip_codes", ["60014", "60012"])
+    zip_codes = [str(z).strip() for z in zip_codes if str(z).strip()]
+    if not zip_codes:
+        return jsonify({"error": "No ZIP codes provided."}), 400
 
     stations = fetch_all_stations(zip_codes)
     if not stations:

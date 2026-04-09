@@ -129,6 +129,29 @@
       color: #aaa;
       margin-bottom: 24px;
     }
+
+    .zip-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .zip-row label {
+      font-size: 14px;
+      font-weight: 600;
+      color: #555;
+      white-space: nowrap;
+    }
+    .zip-row input {
+      padding: 9px 12px;
+      border: 1.5px solid #ddd;
+      border-radius: 8px;
+      font-size: 14px;
+      width: 220px;
+      outline: none;
+      transition: border-color .15s;
+    }
+    .zip-row input:focus { border-color: #e05c00; }
   </style>
 </head>
 <body>
@@ -136,11 +159,17 @@
 <header>
   <div>
     <h1>⛽ Gas Price Tracker</h1>
-    <p>ZIP codes 60014 &amp; 60012 · 87 Octane</p>
+    <p>87 Octane · enter ZIP codes below</p>
   </div>
 </header>
 
 <main>
+  <div class="zip-row">
+    <label for="zip-input">ZIP codes</label>
+    <input id="zip-input" type="text" value="60014, 60012"
+           placeholder="e.g. 60014, 60012" spellcheck="false" />
+  </div>
+
   <div class="controls">
     <button id="btn-fetch">
       <span class="spinner" id="spinner"></span>
@@ -206,14 +235,26 @@
     return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
+  const zipInput = document.getElementById('zip-input');
+
   btnFetch.addEventListener('click', async () => {
+    const zips = zipInput.value.split(',').map(z => z.trim()).filter(Boolean);
+    if (!zips.length) {
+      setStatus('Please enter at least one ZIP code.', true);
+      return;
+    }
+
     setLoading(true);
     setStatus('Fetching prices from GasBuddy… (this takes ~30 seconds)');
     zipSections.innerHTML = '';
     resultsEl.style.display = 'none';
 
     try {
-      const res = await fetch('/api/fetch', { method: 'POST' });
+      const res = await fetch('/api/fetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ zip_codes: zips }),
+      });
       const data = await res.json();
 
       if (!res.ok) {
