@@ -1,8 +1,8 @@
-# ⛽ Gas Price Tracker — Setup Guide
+# ⛽ Gas Price Tracker
 
-Fetches daily 87-octane gas prices for ZIP codes **60014** and **60012** by scraping
-**GasBuddy** with Selenium, saves them to a local CSV, and emails you a formatted
-report at 7 AM every day. No API keys or accounts required.
+Fetches 87-octane gas prices for ZIP codes **60014** and **60012** using the
+**Google Maps Places API**, saves them to a local CSV, and displays them in a
+simple web app. Optionally emails a daily HTML report and logs to Google Sheets.
 
 ---
 
@@ -10,8 +10,8 @@ report at 7 AM every day. No API keys or accounts required.
 
 | File | Purpose |
 |------|---------|
-| `gas_tracker.py` | Main script — scrape, save, email |
-| `debug_gasbuddy.py` | Debug tool — run if prices stop working |
+| `app.py` | Flask web app — click a button to fetch prices & export CSV |
+| `gas_tracker.py` | Core logic — API calls, CSV saving, email, Google Sheets |
 | `config.example.json` | Template — copy to `config.json` and fill in |
 | `requirements.txt` | Python dependencies |
 | `gas_prices.csv` | Generated automatically — your price history |
@@ -25,19 +25,7 @@ Download Python 3.10+ from https://python.org/downloads
 
 ---
 
-## 2. Install Google Chrome
-
-Selenium controls a real Chrome browser in the background. If Chrome isn't already
-installed, download it from https://www.google.com/chrome
-
-The script uses `webdriver-manager` to automatically download the correct
-ChromeDriver version — you don't need to install it manually.
-
----
-
-## 3. Install Python Dependencies
-
-Open Terminal (Mac/Linux) or Command Prompt (Windows) in this folder:
+## 2. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
@@ -45,17 +33,18 @@ pip install -r requirements.txt
 
 ---
 
-## 4. Configure
+## 3. Configure
 
 ```bash
 cp config.example.json config.json
 ```
 
-Open `config.json` and fill in your email details:
+Open `config.json` and fill in your details:
 
 ```json
 {
   "zip_codes": ["60014", "60012"],
+  "google_maps_api_key": "YOUR_GOOGLE_MAPS_API_KEY_HERE",
   "email": {
     "sender": "your.gmail@gmail.com",
     "recipient": "your.gmail@gmail.com",
@@ -69,13 +58,14 @@ Open `config.json` and fill in your email details:
 }
 ```
 
-| Field | What to put |
-|-------|-------------|
-| `email.sender` | Your Gmail address |
-| `email.recipient` | Where to send the report (can be the same address) |
-| `email.app_password` | A Gmail App Password — **not** your regular password (see below) |
+### Getting a Google Maps API Key
 
-### Getting a Gmail App Password
+1. Go to https://console.cloud.google.com and create a project
+2. Enable these APIs: **Geocoding API**, **Places API**, **Place Details**
+3. Go to **APIs & Services → Credentials → Create API Key**
+4. Paste the key into `config.json`
+
+### Getting a Gmail App Password (for email reports)
 
 1. Go to https://myaccount.google.com/security
 2. Enable **2-Step Verification** (required)
@@ -85,40 +75,30 @@ Open `config.json` and fill in your email details:
 
 ---
 
-## 5. Test It
+## 4. Run the Web App
+
+```bash
+python app.py
+```
+
+Open **http://localhost:5000** in your browser. You'll see:
+
+- **Fetch Latest Prices** — calls the Google Maps API and displays results grouped by ZIP, sorted cheapest first
+- **Export CSV** — downloads your full price history as a CSV file
+
+---
+
+## 5. Run as a Script (no web UI)
 
 ```bash
 python gas_tracker.py
 ```
 
-You should see output like:
-
-```
-==================================================
-Gas Price Tracker — 2026-04-08 07:00:01
-==================================================
-
-[1/3] Scraping gas prices from GasBuddy...
-  Scraping ZIP 60014...
-    Loading https://www.gasbuddy.com/home?search=60014&fuel=1&method=all&maxAge=0
-    Found 12 station cards
-    → Collected 12 stations
-  ...
-
-[2/3] Saving data (24 stations)...
-  Saved 24 rows to gas_prices.csv
-
-[3/3] Sending email report...
-  Email sent to your.gmail@gmail.com
-
-✅ Done!
-```
-
-An email will arrive in your inbox with stations sorted cheapest first per ZIP.
+Fetches prices, saves to CSV, and sends an email report.
 
 ---
 
-## 6. Schedule at 7 AM Daily
+## 6. Schedule at 7 AM Daily (script mode)
 
 ### Mac / Linux (cron)
 
@@ -132,47 +112,38 @@ Add this line — update the paths to match your folder:
 0 7 * * * /usr/bin/python3 /path/to/gas_tracker/gas_tracker.py >> /path/to/gas_tracker/cron.log 2>&1
 ```
 
-Save and exit. The script will now run automatically every morning at 7 AM.
-
 ### Windows (Task Scheduler)
 
 1. Open **Task Scheduler** → **Create Basic Task**
-2. Name: `Gas Price Tracker`
-3. Trigger: **Daily** at **7:00 AM**
-4. Action: **Start a program**
-   - Program: `python` (or full path like `C:\Python312\python.exe`)
+2. Trigger: **Daily** at **7:00 AM**
+3. Action: **Start a program**
+   - Program: `python`
    - Arguments: `gas_tracker.py`
    - Start in: `C:\path\to\this\folder`
-5. Finish → right-click the task → **Run** to test
-6. In task **Properties**, check **"Run whether user is logged on or not"** so it runs even when you're not at your computer
+4. In task **Properties**, check **"Run whether user is logged on or not"**
 
 ---
 
-## 7. CSV Database
+## 7. CSV Format
 
-Prices are automatically appended to `gas_prices.csv` each run:
+Prices are appended to `gas_prices.csv` on each run:
 
 ```
 date,zip,station,address,price_87
-2026-04-08,60014,Sam's Club,"5670 Northwest Hwy, Crystal Lake, IL",4.15
-2026-04-08,60014,Marathon,"770 Virginia Rd, Crystal Lake, IL",4.24
-2026-04-08,60012,BP,"123 Main St, Crystal Lake, IL",4.19
+2026-04-09,60014,Sam's Club,"5670 Northwest Hwy, Crystal Lake, IL",4.15
+2026-04-09,60014,Marathon,"770 Virginia Rd, Crystal Lake, IL",4.24
+2026-04-09,60012,BP,"123 Main St, Crystal Lake, IL",4.19
 ```
-
-Open this in Excel or Google Sheets anytime to view historical trends.
 
 ---
 
 ## 8. Optional: Google Sheets Integration
 
-To also log prices to a Google Sheet automatically:
-
-1. Go to https://console.cloud.google.com and create a project
-2. Enable the **Google Sheets API**
-3. Go to **IAM & Admin → Service Accounts** → Create a service account → Download the JSON key → save it as `service_account.json` in this folder
-4. Open your Google Sheet → **Share** → paste the service account email → give it **Editor** access
-5. Copy the Sheet ID from the URL (the long string between `/d/` and `/edit`)
-6. In `config.json` set:
+1. Go to https://console.cloud.google.com → enable **Google Sheets API**
+2. **IAM & Admin → Service Accounts** → Create account → Download JSON key → save as `service_account.json`
+3. Share your Google Sheet with the service account email (Editor access)
+4. Copy the Sheet ID from the URL (the string between `/d/` and `/edit`)
+5. In `config.json`:
    ```json
    "google_sheets": {
      "enabled": true,
@@ -180,7 +151,7 @@ To also log prices to a Google Sheet automatically:
      "service_account_json": "service_account.json"
    }
    ```
-7. Install the extra libraries:
+6. Install extra libraries:
    ```bash
    pip install google-auth google-auth-httplib2 google-api-python-client
    ```
@@ -191,22 +162,7 @@ To also log prices to a Google Sheet automatically:
 
 | Problem | Fix |
 |---------|-----|
-| No stations found / 0 collected | GasBuddy may have updated their HTML — run `debug_gasbuddy.py` and check the screenshot |
-| Prices stopped working after an update | Run `python debug_gasbuddy.py`, check `debug_screenshot.png` and share output to get selectors updated |
-| Email not sending | Double-check Gmail App Password in `config.json`; make sure 2-Step Verification is on |
+| No stations found | Check your API key and that Geocoding + Places APIs are enabled |
+| Prices show N/A | Station hasn't reported prices to Google — normal for some stations |
+| Email not sending | Double-check Gmail App Password; make sure 2-Step Verification is on |
 | `ModuleNotFoundError` | Run `pip install -r requirements.txt` again |
-| `ChromeDriver` version error | Run `pip install --upgrade webdriver-manager` |
-| Windows: script doesn't run at 7am | In Task Scheduler Properties, check "Run whether user is logged on or not" |
-| Mac: cron job not running | Check cron has Full Disk Access in System Settings → Privacy & Security |
-
-### If GasBuddy Changes Their Layout
-
-GasBuddy occasionally updates their CSS class names, which can break the scraper.
-If prices suddenly stop being collected:
-
-1. Run the debug script:
-   ```bash
-   python debug_gasbuddy.py
-   ```
-2. Open `debug_screenshot.png` to confirm the page loaded correctly
-3. Check the terminal output for updated class names and update the selectors in `gas_tracker.py`
