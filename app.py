@@ -39,7 +39,7 @@ def fetch_prices():
 
     stations = fetch_all_stations(zip_codes)
     if not stations:
-        return jsonify({"error": "No stations found. Check your API key and internet connection."}), 502
+        return jsonify({"error": "No stations found. Check your internet connection, or GasBuddy may have changed their layout."}), 502
 
     save_to_csv(stations)
     save_to_google_sheets(stations, config)

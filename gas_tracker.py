@@ -66,60 +66,55 @@ def fetch_stations_for_zip(zip_code: str, driver: webdriver.Chrome) -> list[dict
 
     time.sleep(4)  # let prices finish rendering (they load after station names)
 
+    import re
     stations = []
 
-    # GasBuddy uses a "belt" layout: station info card + price card side by side.
-    # The belt container holds both. Use it as the top-level element.
-    cards = driver.find_elements(By.CSS_SELECTOR, "[class*='GenericStationListItem-module__beltContainer']")
-    if not cards:
-        cards = driver.find_elements(By.CSS_SELECTOR, "[class*='Belt__mainContainer']")
-    if not cards:
-        # Fallback: station display cards (won't have prices but better than nothing)
-        cards = driver.find_elements(By.CSS_SELECTOR, "[class*='StationDisplay-module__card']")
-    if not cards:
-        cards = driver.find_elements(By.CSS_SELECTOR, "[class*='StationDisplay']")
+    # GasBuddy has two separate DOM trees: station info cards and price cards.
+    # We find them independently and pair by index.
 
-    # Filter out sub-elements — real belt containers have substantial text
-    cards = [c for c in cards if len(c.text.strip()) > 40]
-    print(f"    Found {len(cards)} station cards")
-    seen = set()  # deduplicate by (name, address)
+    # Station info cards — filter to ones that contain a street address
+    # (rules out sub-elements that only have star ratings / review counts)
+    addr_re = re.compile(r'^\d+\s+\S', re.MULTILINE)
+    station_els = driver.find_elements(By.CSS_SELECTOR, "[class*='StationDisplay-module__card']")
+    if not station_els:
+        station_els = driver.find_elements(By.CSS_SELECTOR, "[class*='StationDisplay']")
+    station_els = [c for c in station_els if addr_re.search(c.text)]
 
-    for card in cards:
+    # Price elements — the confirmed class from GasBuddy's current layout
+    price_els = driver.find_elements(By.CSS_SELECTOR, "[class*='StationDisplayPrice-module__price']")
+    # Keep only elements whose text looks like a price
+    def _is_price(el):
         try:
-            # Try CSS selectors first, fall back to parsing raw card text
-            name = _extract_text(card, [
-                "[class*='header__']",
-                "[class*='StationDisplay-module__name']",
-                "[class*='name__']",
-                "h3", "h4", "a[class*='name']",
-            ])
+            val = float((el.get_attribute("textContent") or "").strip().lstrip("$"))
+            return 1.5 < val < 10.0
+        except Exception:
+            return False
+    price_els = [el for el in price_els if _is_price(el)]
 
-            address = _extract_text(card, [
-                "[class*='Address']",
-                "[class*='address']",
-                "[class*='locality']",
-                "[class*='location']",
-                "address",
-            ])
+    print(f"    Found {len(station_els)} station cards, {len(price_els)} price elements")
+    seen = set()
 
-            # Fall back to parsing the card's raw text lines
-            if not name or not address:
-                name_fb, address_fb = _parse_card_text(card.text)
-                if not name:
-                    name = name_fb
-                if not address:
-                    address = address_fb
+    for i, card in enumerate(station_els):
+        try:
+            name, address = _parse_card_text(card.text)
 
-            price_87 = _extract_price(card)
+            # Price comes from the matching price element (same index)
+            price_87 = "N/A"
+            if i < len(price_els):
+                raw = (price_els[i].get_attribute("textContent") or "").strip().lstrip("$")
+                try:
+                    val = float(raw)
+                    if 1.5 < val < 10.0:
+                        price_87 = f"{val:.3f}"
+                except ValueError:
+                    pass
 
             name    = (name or "Unknown").strip()
             address = (address or "Unknown").strip()
-            # Deduplicate by name alone if address is unknown, else by (name, address)
             key = name.lower() if address == "Unknown" else (name.lower(), address.lower())
             if key in seen:
                 continue
             seen.add(key)
-            # Also register the name key so duplicates with/without address collapse
             seen.add(name.lower())
             stations.append({
                 "zip":      zip_code,
