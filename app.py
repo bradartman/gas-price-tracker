@@ -6,6 +6,9 @@ Serves a simple web UI to fetch latest prices and export CSV.
 import csv
 import io
 import json
+import os
+import threading
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 
@@ -94,4 +97,8 @@ def history():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", debug=True, port=5999)
+    port = 5999
+    # Open the browser automatically, but only once (not on Flask's reloader restart)
+    if not os.environ.get("WERKZEUG_RUN_MAIN"):
+        threading.Timer(1.5, lambda: webbrowser.open(f"http://localhost:{port}")).start()
+    app.run(host="0.0.0.0", debug=True, port=port)
