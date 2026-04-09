@@ -1,9 +1,10 @@
 """
-Debug script - captures GasBuddy HTML so we can find the right CSS selectors.
+Debug script - captures GasBuddy HTML and price data.
 Run: python debug_gasbuddy.py
-Outputs: debug_card.html (first card's HTML) and debug_page.html (full page)
+Outputs: debug_card.html, debug_page.html, debug_text.txt
 """
 
+import re
 import time
 from pathlib import Path
 from selenium import webdriver
@@ -32,36 +33,88 @@ try:
     print(f"Loading {url}...")
     driver.get(url)
 
+    # Wait for station cards
     wait = WebDriverWait(driver, 20)
     try:
         wait.until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, "[class*='StationDisplay']")
         ))
+        print("Station elements found. Waiting 8s for prices to load...")
     except Exception:
-        time.sleep(5)
+        print("Station selector not found. Waiting 8s anyway...")
 
-    time.sleep(3)
+    time.sleep(8)
 
     # Save full page source
     Path("debug_page.html").write_text(driver.page_source, encoding="utf-8")
     print("Saved full page to debug_page.html")
 
-    # Try to find cards and dump first one
+    # Find cards — keep only ones with substantial text
+    cards = []
     for selector in [
         "[class*='StationDisplay-module__card']",
         "[class*='StationDisplay']",
         "[class*='station']",
     ]:
-        cards = driver.find_elements(By.CSS_SELECTOR, selector)
+        all_cards = driver.find_elements(By.CSS_SELECTOR, selector)
+        cards = [c for c in all_cards if len(c.text.strip()) > 40]
         if cards:
-            print(f"\nFound {len(cards)} cards with selector: {selector}")
-            Path("debug_card.html").write_text(cards[0].get_attribute("outerHTML"), encoding="utf-8")
-            print("Saved first card HTML to debug_card.html")
-            print("\n--- First card text ---")
-            print(cards[0].text)
+            print(f"\nFound {len(cards)} real cards with selector: {selector}")
             break
+
+    debug_lines = []
+
+    if cards:
+        # Save the first card's HTML
+        Path("debug_card.html").write_text(cards[0].get_attribute("outerHTML"), encoding="utf-8")
+        print("Saved first card HTML to debug_card.html")
+
+        for i, card in enumerate(cards[:5]):
+            debug_lines.append(f"\n{'='*60}")
+            debug_lines.append(f"CARD {i+1}")
+            debug_lines.append(f"{'='*60}")
+            debug_lines.append(f".text:\n{card.text}")
+            debug_lines.append(f"\ntextContent:\n{card.get_attribute('textContent')}")
+
+            # Check each price-related selector
+            debug_lines.append("\n--- Price selector results ---")
+            for sel in [
+                "[class*='PriceDisplay']",
+                "[class*='price']",
+                "[class*='Price']",
+                "[class*='integer']",
+                "[class*='decimal']",
+                "[class*='superscript']",
+                "[class*='cash']",
+                "[data-testid*='price']",
+                "span",
+            ]:
+                els = card.find_elements(By.CSS_SELECTOR, sel)
+                if els:
+                    texts = [
+                        f"'{e.get_attribute('textContent').strip()}' (class={e.get_attribute('class') or ''})"[:120]
+                        for e in els[:3]
+                    ]
+                    debug_lines.append(f"  {sel}: {texts}")
     else:
-        print("No cards found with any selector")
+        debug_lines.append("No cards found with any selector!")
+
+    # Search whole page for price-like text
+    debug_lines.append("\n\n--- All elements with price-like text on page ---")
+    for el in driver.find_elements(By.CSS_SELECTOR, "span, div"):
+        try:
+            tc = (el.get_attribute("textContent") or "").strip()
+            if re.search(r'\b[2-9]\.\d{2,3}\b', tc) and len(tc) < 30:
+                cls = el.get_attribute("class") or ""
+                debug_lines.append(f"  text='{tc}' class='{cls[:100]}'")
+        except Exception:
+            continue
+
+    out = "\n".join(debug_lines)
+    Path("debug_text.txt").write_text(out, encoding="utf-8")
+    print("\nSaved debug info to debug_text.txt")
+    print("\n--- debug_text.txt preview ---")
+    print(out[:3000])
 
 finally:
     driver.quit()
