@@ -76,6 +76,8 @@ def fetch_stations_for_zip(zip_code: str, driver: webdriver.Chrome) -> list[dict
         # Last resort: any list item that contains a price
         cards = driver.find_elements(By.CSS_SELECTOR, "li[class*='station'], div[class*='station']")
 
+    # Filter out sub-elements — real station cards have substantial text
+    cards = [c for c in cards if len(c.text.strip()) > 40]
     print(f"    Found {len(cards)} station cards")
     seen = set()  # deduplicate by (name, address)
 
@@ -109,10 +111,13 @@ def fetch_stations_for_zip(zip_code: str, driver: webdriver.Chrome) -> list[dict
 
             name    = (name or "Unknown").strip()
             address = (address or "Unknown").strip()
-            key = (name.lower(), address.lower())
+            # Deduplicate by name alone if address is unknown, else by (name, address)
+            key = name.lower() if address == "Unknown" else (name.lower(), address.lower())
             if key in seen:
                 continue
             seen.add(key)
+            # Also register the name key so duplicates with/without address collapse
+            seen.add(name.lower())
             stations.append({
                 "zip":      zip_code,
                 "station":  name,
@@ -180,11 +185,20 @@ def _parse_card_text(text: str) -> tuple[str, str]:
         return False
 
     def looks_like_username(line: str) -> bool:
-        """Usernames on GasBuddy tend to be single words with mixed case/numbers, no spaces."""
+        """Usernames on GasBuddy are single words that aren't known brands."""
         if ' ' in line:
-            return False
-        # Single word with digits mixed in (e.g. Redh0t, cargo123)
+            return False  # multi-word strings are not usernames
+        lower = line.lower()
+        if any(brand == lower for brand in _GAS_BRANDS):
+            return False  # known brand, not a username
+        # Single word with digits mixed in (Redh0t, cargo123)
         if re.search(r'[a-zA-Z]', line) and re.search(r'\d', line):
+            return True
+        # CamelCase single word (DataFeed, GotGass, GasBuddy)
+        if re.search(r'[a-z][A-Z]', line):
+            return True
+        # All-lowercase long single word (cargonotsofast)
+        if line.islower() and len(line) > 6:
             return True
         return False
 
