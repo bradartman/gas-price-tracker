@@ -68,15 +68,18 @@ def fetch_stations_for_zip(zip_code: str, driver: webdriver.Chrome) -> list[dict
 
     stations = []
 
-    # GasBuddy renders station cards — try a few selector strategies
-    cards = driver.find_elements(By.CSS_SELECTOR, "[class*='StationDisplay-module__card']")
+    # GasBuddy uses a "belt" layout: station info card + price card side by side.
+    # The belt container holds both. Use it as the top-level element.
+    cards = driver.find_elements(By.CSS_SELECTOR, "[class*='GenericStationListItem-module__beltContainer']")
+    if not cards:
+        cards = driver.find_elements(By.CSS_SELECTOR, "[class*='Belt__mainContainer']")
+    if not cards:
+        # Fallback: station display cards (won't have prices but better than nothing)
+        cards = driver.find_elements(By.CSS_SELECTOR, "[class*='StationDisplay-module__card']")
     if not cards:
         cards = driver.find_elements(By.CSS_SELECTOR, "[class*='StationDisplay']")
-    if not cards:
-        # Last resort: any list item that contains a price
-        cards = driver.find_elements(By.CSS_SELECTOR, "li[class*='station'], div[class*='station']")
 
-    # Filter out sub-elements — real station cards have substantial text
+    # Filter out sub-elements — real belt containers have substantial text
     cards = [c for c in cards if len(c.text.strip()) > 40]
     print(f"    Found {len(cards)} station cards")
     seen = set()  # deduplicate by (name, address)
@@ -235,8 +238,9 @@ def _extract_price(card) -> str:
     """Extract the 87-octane price from a station card."""
     import re
 
-    # Strategy 1: CSS selectors — try broad class-name patterns GasBuddy uses
+    # Strategy 1: CSS selectors — most specific first based on debug output
     price_selectors = [
+        "[class*='StationDisplayPrice-module__price']",  # confirmed class from GasBuddy
         "[class*='PriceDisplay']",
         "[class*='price__']",
         "[class*='Price']",
