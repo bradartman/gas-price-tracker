@@ -80,28 +80,36 @@ def fetch_stations_for_zip(zip_code: str, driver: webdriver.Chrome) -> list[dict
 
     for card in cards:
         try:
-            # Station name
+            # Try CSS selectors first, fall back to parsing raw card text
             name = _extract_text(card, [
                 "[class*='header__']",
                 "[class*='StationDisplay-module__name']",
+                "[class*='name__']",
                 "h3", "h4", "a[class*='name']",
-            ]) or "Unknown"
+            ])
 
-            # Address
             address = _extract_text(card, [
                 "[class*='Address']",
                 "[class*='address']",
                 "[class*='locality']",
+                "[class*='location']",
                 "address",
-            ]) or "Unknown"
+            ])
 
-            # Price
+            # Fall back to parsing the card's raw text lines
+            if not name or not address:
+                name_fb, address_fb = _parse_card_text(card.text)
+                if not name:
+                    name = name_fb
+                if not address:
+                    address = address_fb
+
             price_87 = _extract_price(card)
 
             stations.append({
                 "zip":      zip_code,
-                "station":  name.strip(),
-                "address":  address.strip(),
+                "station":  (name or "Unknown").strip(),
+                "address":  (address or "Unknown").strip(),
                 "price_87": price_87,
             })
         except Exception as e:
@@ -122,6 +130,47 @@ def _extract_text(element, selectors: list[str]) -> str:
         except Exception:
             continue
     return ""
+
+
+def _parse_card_text(text: str) -> tuple[str, str]:
+    """
+    Parse station name and address from raw card text.
+    GasBuddy cards typically have the station name on the first line
+    and address somewhere in the middle lines.
+    """
+    import re
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+
+    name = ""
+    address = ""
+
+    # First non-price, non-number line is usually the station name
+    for line in lines:
+        if not re.match(r'^[\d\.\$]', line) and len(line) > 2:
+            name = line
+            break
+
+    # Look for a line that looks like a street address
+    addr_pattern = re.compile(
+        r'\d+\s+\w+.*(st|ave|rd|dr|blvd|ln|way|hwy|route|pkwy|ct|pl|cir)',
+        re.IGNORECASE
+    )
+    for line in lines:
+        if addr_pattern.search(line) and line != name:
+            address = line
+            break
+
+    # If no street address found, use second non-price line as address
+    if not address:
+        count = 0
+        for line in lines:
+            if not re.match(r'^[\d\.\$]', line) and len(line) > 2:
+                count += 1
+                if count == 2:
+                    address = line
+                    break
+
+    return name, address
 
 
 def _extract_price(card) -> str:
