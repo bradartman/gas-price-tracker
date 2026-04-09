@@ -121,7 +121,6 @@ def fetch_stations_for_zip(zip_code: str, driver: webdriver.Chrome) -> list[dict
             "address":  address,
             "price_87": price_87,
         })
-            continue
 
     return stations
 
