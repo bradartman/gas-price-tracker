@@ -3,8 +3,6 @@
 
   "zip_codes": ["60014", "60012"],
 
-  "google_maps_api_key": "YOUR_GOOGLE_MAPS_API_KEY_HERE",
-
   "email": {
     "sender": "your.gmail@gmail.com",
     "recipient": "your.gmail@gmail.com",

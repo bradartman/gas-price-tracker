@@ -1,20 +1,25 @@
 """
 Gas Price Tracker - 60014 & 60012 ZIP codes
-Uses Google Maps Places API to find gas stations and current fuel prices.
+Scrapes GasBuddy with Selenium for free, no API key required.
 Saves to CSV, optionally to Google Sheets, and emails a daily HTML report.
-Run daily at 7am via Task Scheduler (Windows) or cron (Mac/Linux).
 """
 
 import csv
-import smtplib
 import json
+import smtplib
 import time
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
-import requests
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
+from webdriver_manager.chrome import ChromeDriverManager
 
 # ── CONFIG ───────────────────────────────────────────────────────────────────
 CONFIG_FILE = Path(__file__).parent / "config.json"
@@ -28,111 +33,150 @@ def load_config():
     with open(CONFIG_FILE) as f:
         return json.load(f)
 
-# ── ZIP → LAT/LNG ────────────────────────────────────────────────────────────
-def zip_to_latlng(zip_code: str, api_key: str) -> tuple[float, float] | None:
-    """Convert a ZIP code to lat/lng using the Geocoding API."""
-    url = "https://maps.googleapis.com/maps/api/geocode/json"
-    resp = requests.get(url, params={"address": zip_code, "key": api_key}, timeout=10)
-    data = resp.json()
-    if data.get("status") == "OK":
-        loc = data["results"][0]["geometry"]["location"]
-        return loc["lat"], loc["lng"]
-    print(f"  [warn] Could not geocode ZIP {zip_code}: {data.get('status')}")
-    return None
+# ── SELENIUM DRIVER ───────────────────────────────────────────────────────────
+def _make_driver() -> webdriver.Chrome:
+    opts = Options()
+    opts.add_argument("--headless")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--disable-gpu")
+    opts.add_argument("--window-size=1920,1080")
+    opts.add_argument(
+        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    )
+    opts.add_experimental_option("excludeSwitches", ["enable-logging"])
+    service = Service(ChromeDriverManager().install())
+    return webdriver.Chrome(service=service, options=opts)
 
-# ── FETCH GAS STATIONS ────────────────────────────────────────────────────────
-def fetch_stations_for_zip(zip_code: str, api_key: str, radius_meters: int = 5000) -> list[dict]:
-    """
-    Uses the Places API (Nearby Search) to find gas stations,
-    then fetches fuel price details via Place Details.
-    """
-    coords = zip_to_latlng(zip_code, api_key)
-    if not coords:
-        return []
-    lat, lng = coords
+# ── SCRAPE GASBUDDY ───────────────────────────────────────────────────────────
+def fetch_stations_for_zip(zip_code: str, driver: webdriver.Chrome) -> list[dict]:
+    url = f"https://www.gasbuddy.com/home?search={zip_code}&fuel=1&method=all&maxAge=0"
+    print(f"    Loading {url}")
+    driver.get(url)
 
-    # Step 1: Nearby Search for gas stations
-    nearby_url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
-    params = {
-        "location": f"{lat},{lng}",
-        "radius":   radius_meters,
-        "type":     "gas_station",
-        "key":      api_key,
-    }
-    resp = requests.get(nearby_url, params=params, timeout=15)
-    data = resp.json()
+    # Wait for station cards to appear
+    wait = WebDriverWait(driver, 20)
+    try:
+        wait.until(EC.presence_of_element_located(
+            (By.CSS_SELECTOR, "[class*='StationDisplay']")
+        ))
+    except Exception:
+        time.sleep(4)  # fallback wait if selector doesn't match
 
-    if data.get("status") not in ("OK", "ZERO_RESULTS"):
-        print(f"  [warn] Places API error for ZIP {zip_code}: {data.get('status')} — {data.get('error_message','')}")
-        return []
-
-    results = data.get("results", [])
-    print(f"    Found {len(results)} stations via Places API")
+    time.sleep(2)  # let prices finish rendering
 
     stations = []
-    for place in results[:15]:
-        place_id = place.get("place_id")
-        name     = place.get("name", "Unknown")
-        vicinity = place.get("vicinity", "Unknown")
 
-        # Step 2: Place Details to get fuel prices (if available)
-        price_87 = fetch_fuel_price(place_id, api_key)
+    # GasBuddy renders station cards — try a few selector strategies
+    cards = driver.find_elements(By.CSS_SELECTOR, "[class*='StationDisplay-module__card']")
+    if not cards:
+        cards = driver.find_elements(By.CSS_SELECTOR, "[class*='StationDisplay']")
+    if not cards:
+        # Last resort: any list item that contains a price
+        cards = driver.find_elements(By.CSS_SELECTOR, "li[class*='station'], div[class*='station']")
 
-        stations.append({
-            "zip":      zip_code,
-            "station":  name,
-            "address":  vicinity,
-            "price_87": price_87,
-            "place_id": place_id,
-        })
-        time.sleep(0.1)  # stay well within rate limits
+    print(f"    Found {len(cards)} station cards")
+
+    for card in cards:
+        try:
+            # Station name
+            name = _extract_text(card, [
+                "[class*='header__']",
+                "[class*='StationDisplay-module__name']",
+                "h3", "h4", "a[class*='name']",
+            ]) or "Unknown"
+
+            # Address
+            address = _extract_text(card, [
+                "[class*='Address']",
+                "[class*='address']",
+                "[class*='locality']",
+                "address",
+            ]) or "Unknown"
+
+            # Price
+            price_87 = _extract_price(card)
+
+            stations.append({
+                "zip":      zip_code,
+                "station":  name.strip(),
+                "address":  address.strip(),
+                "price_87": price_87,
+            })
+        except Exception as e:
+            print(f"    [warn] Could not parse card: {e}")
+            continue
 
     return stations
 
 
-def fetch_fuel_price(place_id: str, api_key: str) -> str:
-    """
-    Fetch fuel prices from Place Details.
-    Google includes fuel prices in the 'price_levels' / 'fuel_options' field
-    for stations that report them. Falls back to 'N/A' gracefully.
-    """
-    url = "https://maps.googleapis.com/maps/api/place/details/json"
-    params = {
-        "place_id": place_id,
-        "fields":   "name,fuel_options",
-        "key":      api_key,
-    }
-    try:
-        resp = requests.get(url, params=params, timeout=10)
-        data = resp.json()
-        result = data.get("result", {})
+def _extract_text(element, selectors: list[str]) -> str:
+    """Try each CSS selector in order, return first non-empty text found."""
+    for sel in selectors:
+        try:
+            el = element.find_element(By.CSS_SELECTOR, sel)
+            text = el.text.strip()
+            if text:
+                return text
+        except Exception:
+            continue
+    return ""
 
-        # fuel_options is available on the Places API (Advanced tier)
-        fuel_options = result.get("fuel_options", {})
-        fuel_prices  = fuel_options.get("fuelpricelist", [])
 
-        for fp in fuel_prices:
-            fuel_type = fp.get("type", "")
-            # Match regular / unleaded / 87
-            if any(t in fuel_type.upper() for t in ["REGULAR", "UNLEADED", "87"]):
-                price_info = fp.get("price", {})
-                units      = price_info.get("units", 0)        # whole dollars
-                nanos      = price_info.get("nanos", 0)        # fractional
-                price_val  = units + nanos / 1_000_000_000
-                if price_val > 0:
-                    return f"{price_val:.3f}"
-    except Exception as e:
-        print(f"    [warn] Price fetch failed for {place_id}: {e}")
+def _extract_price(card) -> str:
+    """Extract the 87-octane price from a station card."""
+    # GasBuddy shows prices as e.g. "3.459" or "$3.45" or split across spans
+    price_selectors = [
+        "[class*='price__'] [class*='integer']",
+        "[class*='Price']",
+        "[class*='price']",
+        "[data-testid*='price']",
+        "span[class*='cash']",
+    ]
+    for sel in price_selectors:
+        try:
+            els = card.find_elements(By.CSS_SELECTOR, sel)
+            for el in els:
+                text = el.text.strip().replace("$", "").replace(",", "")
+                # Validate it looks like a price (e.g. 3.459 or 3.45)
+                try:
+                    val = float(text)
+                    if 1.0 < val < 10.0:
+                        return f"{val:.3f}"
+                except ValueError:
+                    continue
+        except Exception:
+            continue
+
+    # Try raw text scan of the card for a price pattern
+    import re
+    text = card.text
+    match = re.search(r'\$?\s*([2-9]\.\d{2,3})', text)
+    if match:
+        try:
+            val = float(match.group(1))
+            if 1.0 < val < 10.0:
+                return f"{val:.3f}"
+        except ValueError:
+            pass
 
     return "N/A"
 
+
 # ── FETCH ALL ZIPS ────────────────────────────────────────────────────────────
-def fetch_all_stations(zip_codes: list[str], api_key: str) -> list[dict]:
+def fetch_all_stations(zip_codes: list[str], api_key: str = "") -> list[dict]:
+    """Scrape GasBuddy for all ZIP codes. api_key param ignored (kept for compatibility)."""
+    driver = _make_driver()
     all_stations = []
-    for z in zip_codes:
-        print(f"  Fetching stations for ZIP {z}...")
-        stations = fetch_stations_for_zip(z, api_key)
-        all_stations.extend(stations)
+    try:
+        for z in zip_codes:
+            print(f"  Scraping ZIP {z}...")
+            stations = fetch_stations_for_zip(z, driver)
+            print(f"    → Collected {len(stations)} stations")
+            all_stations.extend(stations)
+    finally:
+        driver.quit()
     return all_stations
 
 # ── CSV STORAGE ───────────────────────────────────────────────────────────────
@@ -235,8 +279,7 @@ def build_email_html(stations: list[dict], date_str: str) -> str:
         """
 
     note = """<p style="margin-top:28px;font-size:12px;color:#aaa">
-      Prices sourced via Google Maps Places API. Some stations may show N/A if they haven't
-      reported prices to Google. CSV log saved locally for historical tracking.
+      Prices sourced via GasBuddy. CSV log saved locally for historical tracking.
     </p>"""
 
     return f"""<!DOCTYPE html><html>
@@ -282,17 +325,12 @@ def main():
 
     config    = load_config()
     zip_codes = config.get("zip_codes", ["60014", "60012"])
-    api_key   = config.get("google_maps_api_key", "")
 
-    if not api_key:
-        print("ERROR: google_maps_api_key is missing from config.json")
-        raise SystemExit(1)
-
-    print("\n[1/3] Fetching gas prices via Google Maps...")
-    stations = fetch_all_stations(zip_codes, api_key)
+    print("\n[1/3] Scraping gas prices from GasBuddy...")
+    stations = fetch_all_stations(zip_codes)
 
     if not stations:
-        print("  No stations found. Check your API key and internet connection.")
+        print("  No stations found. Check your internet connection.")
         return
 
     print(f"\n[2/3] Saving data ({len(stations)} stations)...")

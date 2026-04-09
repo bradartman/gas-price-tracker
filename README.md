@@ -1,8 +1,9 @@
 # ⛽ Gas Price Tracker
 
-Fetches 87-octane gas prices for ZIP codes **60014** and **60012** using the
-**Google Maps Places API**, saves them to a local CSV, and displays them in a
-simple web app. Optionally emails a daily HTML report and logs to Google Sheets.
+Fetches 87-octane gas prices for ZIP codes **60014** and **60012** by scraping
+**GasBuddy** with Selenium — free, no API key required. Saves to a local CSV
+and displays results in a simple web app. Optionally emails a daily HTML report
+and logs to Google Sheets.
 
 ---
 
@@ -44,7 +45,6 @@ Open `config.json` and fill in your details:
 ```json
 {
   "zip_codes": ["60014", "60012"],
-  "google_maps_api_key": "YOUR_GOOGLE_MAPS_API_KEY_HERE",
   "email": {
     "sender": "your.gmail@gmail.com",
     "recipient": "your.gmail@gmail.com",
@@ -57,13 +57,6 @@ Open `config.json` and fill in your details:
   }
 }
 ```
-
-### Getting a Google Maps API Key
-
-1. Go to https://console.cloud.google.com and create a project
-2. Enable these APIs: **Geocoding API**, **Places API**, **Place Details**
-3. Go to **APIs & Services → Credentials → Create API Key**
-4. Paste the key into `config.json`
 
 ### Getting a Gmail App Password (for email reports)
 
@@ -162,7 +155,7 @@ date,zip,station,address,price_87
 
 | Problem | Fix |
 |---------|-----|
-| No stations found | Check your API key and that Geocoding + Places APIs are enabled |
-| Prices show N/A | Station hasn't reported prices to Google — normal for some stations |
+| No stations found | GasBuddy may have updated their layout — check your internet connection |
+| Prices show N/A | Station price not visible on GasBuddy for that ZIP |
 | Email not sending | Double-check Gmail App Password; make sure 2-Step Verification is on |
 | `ModuleNotFoundError` | Run `pip install -r requirements.txt` again |
