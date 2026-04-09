@@ -250,9 +250,12 @@ def _parse_card_text(text: str) -> tuple[str, str]:
     name = ""
     address = ""
 
-    # 1. Try to find a known brand name first
+    # 1. Try to find a known brand name first.
+    # Use word-boundary matching so "go" doesn't match inside "GotGass",
+    # and "gas" doesn't match inside "cargonotsofast".
     for line in clean:
-        if any(brand in line.lower() for brand in _GAS_BRANDS):
+        lower = line.lower()
+        if any(re.search(r'(?<!\w)' + re.escape(b) + r'(?!\w)', lower) for b in _GAS_BRANDS):
             name = line
             break
 
