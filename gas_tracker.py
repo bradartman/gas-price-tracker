@@ -68,49 +68,56 @@ def fetch_stations_for_zip(zip_code: str, driver: webdriver.Chrome) -> list[dict
 
     import re
     stations = []
+    addr_re  = re.compile(r'^\d+\s+\S', re.MULTILINE)
+    price_re = re.compile(r'\$\s*[2-9]\.\d{2}')
 
-    # GasBuddy has two separate DOM trees: station info cards and price cards.
-    # We find them independently and pair by index.
-
-    # Station info cards — filter to ones that contain a street address
-    # (rules out sub-elements that only have star ratings / review counts)
-    addr_re = re.compile(r'^\d+\s+\S', re.MULTILINE)
-    station_els = driver.find_elements(By.CSS_SELECTOR, "[class*='StationDisplay-module__card']")
-    if not station_els:
-        station_els = driver.find_elements(By.CSS_SELECTOR, "[class*='StationDisplay']")
-    station_els = [c for c in station_els if addr_re.search(c.text)]
-
-    # Price elements — the confirmed class from GasBuddy's current layout
-    price_els = driver.find_elements(By.CSS_SELECTOR, "[class*='StationDisplayPrice-module__price']")
-    # Keep only elements whose text looks like a price
-    def _is_price(el):
+    def _is_price_el(el):
         try:
             val = float((el.get_attribute("textContent") or "").strip().lstrip("$"))
             return 1.5 < val < 10.0
         except Exception:
             return False
-    price_els = [el for el in price_els if _is_price(el)]
 
-    print(f"    Found {len(station_els)} station cards, {len(price_els)} price elements")
+    # Anchor on confirmed price elements, then walk UP to find the per-station wrapper.
+    # GasBuddy separates station info and price into sibling DOM trees, but they share
+    # a common ancestor (the station list-item). We find that ancestor by navigating up
+    # until we hit an element that (a) contains a street address and (b) has ≤ 2 prices
+    # (so we haven't gone past the per-station boundary into the whole list).
+    price_els = driver.find_elements(By.CSS_SELECTOR, "[class*='StationDisplayPrice-module__price']")
+    price_els = [el for el in price_els if _is_price_el(el)]
+    print(f"    Found {len(price_els)} price elements")
+
     seen = set()
 
-    for i, card in enumerate(station_els):
+    for price_el in price_els:
         try:
-            name, address = _parse_card_text(card.text)
-
-            # Price comes from the matching price element (same index)
+            raw = (price_el.get_attribute("textContent") or "").strip().lstrip("$")
             price_87 = "N/A"
-            if i < len(price_els):
-                raw = (price_els[i].get_attribute("textContent") or "").strip().lstrip("$")
+            try:
+                val = float(raw)
+                if 1.5 < val < 10.0:
+                    price_87 = f"{val:.3f}"
+            except ValueError:
+                pass
+
+            # Walk up from price element to find the station wrapper
+            name, address = "", ""
+            for levels in range(2, 12):
                 try:
-                    val = float(raw)
-                    if 1.5 < val < 10.0:
-                        price_87 = f"{val:.3f}"
-                except ValueError:
-                    pass
+                    xpath  = "/".join([".."] * levels)
+                    parent = price_el.find_element(By.XPATH, xpath)
+                    ptext  = parent.text
+                    if addr_re.search(ptext) and len(price_re.findall(ptext)) <= 2:
+                        name, address = _parse_card_text(ptext)
+                        break
+                except Exception:
+                    break
 
             name    = (name or "Unknown").strip()
             address = (address or "Unknown").strip()
+            if name == "Unknown" and address == "Unknown":
+                continue
+
             key = name.lower() if address == "Unknown" else (name.lower(), address.lower())
             if key in seen:
                 continue
@@ -123,7 +130,7 @@ def fetch_stations_for_zip(zip_code: str, driver: webdriver.Chrome) -> list[dict
                 "price_87": price_87,
             })
         except Exception as e:
-            print(f"    [warn] Could not parse card: {e}")
+            print(f"    [warn] {e}")
             continue
 
     return stations
