@@ -178,6 +178,10 @@ def _parse_card_text(text: str) -> tuple[str, str]:
         # Distance strings like "0.5 mi"
         if re.match(r'^[\d\.]+\s*mi$', lower):
             return True
+        # City, State lines like "Crystal Lake, IL" — these are address components,
+        # not station names. Pattern: letters/spaces, comma, 2-letter state code.
+        if re.match(r'^[A-Za-z][\w\s\.]+,\s*[A-Z]{2}$', line):
+            return True
         return False
 
     def looks_like_username(line: str) -> bool:
