@@ -9,7 +9,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, send_file, Response
+from flask import Flask, jsonify, render_template, request, send_file, Response
 
 from gas_tracker import (
     load_config,
