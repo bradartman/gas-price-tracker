@@ -64,7 +64,7 @@ def fetch_stations_for_zip(zip_code: str, driver: webdriver.Chrome) -> list[dict
     except Exception:
         time.sleep(4)  # fallback wait if selector doesn't match
 
-    time.sleep(2)  # let prices finish rendering
+    time.sleep(4)  # let prices finish rendering (they load after station names)
 
     stations = []
 
@@ -233,37 +233,77 @@ def _parse_card_text(text: str) -> tuple[str, str]:
 
 def _extract_price(card) -> str:
     """Extract the 87-octane price from a station card."""
-    # GasBuddy shows prices as e.g. "3.459" or "$3.45" or split across spans
+    import re
+
+    # Strategy 1: CSS selectors — try broad class-name patterns GasBuddy uses
     price_selectors = [
-        "[class*='price__'] [class*='integer']",
+        "[class*='PriceDisplay']",
+        "[class*='price__']",
         "[class*='Price']",
         "[class*='price']",
         "[data-testid*='price']",
+        "[class*='integer']",
         "span[class*='cash']",
     ]
     for sel in price_selectors:
         try:
             els = card.find_elements(By.CSS_SELECTOR, sel)
             for el in els:
-                text = el.text.strip().replace("$", "").replace(",", "")
-                # Validate it looks like a price (e.g. 3.459 or 3.45)
+                # Use textContent (includes hidden/split text) instead of .text
+                raw = el.get_attribute("textContent") or el.text
+                raw = raw.strip().replace("$", "").replace(",", "").replace("\n", "").replace(" ", "")
                 try:
-                    val = float(text)
-                    if 1.0 < val < 10.0:
+                    val = float(raw)
+                    if 1.5 < val < 10.0:
                         return f"{val:.3f}"
                 except ValueError:
                     continue
         except Exception:
             continue
 
-    # Try raw text scan of the card for a price pattern
-    import re
-    text = card.text
-    match = re.search(r'\$?\s*([2-9]\.\d{2,3})', text)
+    # Strategy 2: reconstruct price from integer + decimal child elements
+    # GasBuddy often splits "3" ".45" "9" across separate spans
+    try:
+        int_els = card.find_elements(By.CSS_SELECTOR,
+            "[class*='integer'], [class*='Integer'], [class*='dollars']")
+        dec_els = card.find_elements(By.CSS_SELECTOR,
+            "[class*='decimal'], [class*='Decimal'], [class*='cents'], [class*='superscript']")
+        if int_els:
+            int_part = (int_els[0].get_attribute("textContent") or "").strip()
+            dec_part = (dec_els[0].get_attribute("textContent") or "").strip() if dec_els else ""
+            combined = int_part + dec_part
+            combined = combined.replace("$", "").replace(",", "").replace(" ", "")
+            try:
+                val = float(combined)
+                if 1.5 < val < 10.0:
+                    return f"{val:.3f}"
+            except ValueError:
+                pass
+    except Exception:
+        pass
+
+    # Strategy 3: scan full card textContent (catches split spans joined together)
+    try:
+        full_text = card.get_attribute("textContent") or card.text
+    except Exception:
+        full_text = card.text
+
+    # Match normal price: "3.459" or "$3.45"
+    match = re.search(r'\$?\s*([2-9]\.\d{2,3})', full_text)
     if match:
         try:
             val = float(match.group(1))
-            if 1.0 < val < 10.0:
+            if 1.5 < val < 10.0:
+                return f"{val:.3f}"
+        except ValueError:
+            pass
+
+    # Match split price: "3" then ".459" (with optional whitespace/newline between)
+    match = re.search(r'\b([2-9])\s*(\.\d{2,3})\b', full_text)
+    if match:
+        try:
+            val = float(match.group(1) + match.group(2))
+            if 1.5 < val < 10.0:
                 return f"{val:.3f}"
         except ValueError:
             pass
