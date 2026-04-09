@@ -77,6 +77,7 @@ def fetch_stations_for_zip(zip_code: str, driver: webdriver.Chrome) -> list[dict
         cards = driver.find_elements(By.CSS_SELECTOR, "li[class*='station'], div[class*='station']")
 
     print(f"    Found {len(cards)} station cards")
+    seen = set()  # deduplicate by (name, address)
 
     for card in cards:
         try:
@@ -106,10 +107,16 @@ def fetch_stations_for_zip(zip_code: str, driver: webdriver.Chrome) -> list[dict
 
             price_87 = _extract_price(card)
 
+            name    = (name or "Unknown").strip()
+            address = (address or "Unknown").strip()
+            key = (name.lower(), address.lower())
+            if key in seen:
+                continue
+            seen.add(key)
             stations.append({
                 "zip":      zip_code,
-                "station":  (name or "Unknown").strip(),
-                "address":  (address or "Unknown").strip(),
+                "station":  name,
+                "address":  address,
                 "price_87": price_87,
             })
         except Exception as e:
@@ -132,43 +139,80 @@ def _extract_text(element, selectors: list[str]) -> str:
     return ""
 
 
+# Known gas station brand names for matching
+_GAS_BRANDS = {
+    "shell", "bp", "marathon", "speedway", "mobil", "exxon", "exxonmobil",
+    "chevron", "citgo", "sunoco", "valero", "casey's", "caseys", "circle k",
+    "kwik trip", "kwiktrip", "meijer", "sam's club", "sams club", "costco",
+    "walmart", "murphy", "pilot", "flying j", "love's", "loves", "sheetz",
+    "wawa", "racetrac", "quiktrip", "qt", "7-eleven", "7eleven", "thorntons",
+    "getgo", "kroger", "aldi", "jewel", "menards", "go", "fuel", "gas",
+    "amoco", "arco", "texaco", "phillips 66", "76", "conoco", "sinclair",
+    "holiday", "kwik", "casey", "flash", "handy", "ez", "fast",
+}
+
+
 def _parse_card_text(text: str) -> tuple[str, str]:
     """
     Parse station name and address from raw card text.
-    GasBuddy cards typically have the station name on the first line
-    and address somewhere in the middle lines.
+    Filters out reporter usernames, star rating text, and other noise.
     """
     import re
+
+    def is_junk(line: str) -> bool:
+        """Return True if this line is UI noise, not station data."""
+        lower = line.lower()
+        # Star rating artifacts from icon fonts
+        if "star icon" in lower or "icon" in lower:
+            return True
+        # GasBuddy reporter attribution
+        if re.search(r'\d+\s+(minute|hour|day|week)s?\s+ago', lower):
+            return True
+        # Fuel type labels
+        if lower in ("regular", "midgrade", "premium", "diesel", "e85", "unleaded"):
+            return True
+        # Pure numbers / prices
+        if re.match(r'^[\d\.\$\/\s]+$', line):
+            return True
+        # Distance strings like "0.5 mi"
+        if re.match(r'^[\d\.]+\s*mi$', lower):
+            return True
+        return False
+
+    def looks_like_username(line: str) -> bool:
+        """Usernames on GasBuddy tend to be single words with mixed case/numbers, no spaces."""
+        if ' ' in line:
+            return False
+        # Single word with digits mixed in (e.g. Redh0t, cargo123)
+        if re.search(r'[a-zA-Z]', line) and re.search(r'\d', line):
+            return True
+        return False
+
     lines = [l.strip() for l in text.splitlines() if l.strip()]
+    clean = [l for l in lines if not is_junk(l)]
 
     name = ""
     address = ""
 
-    # First non-price, non-number line is usually the station name
-    for line in lines:
-        if not re.match(r'^[\d\.\$]', line) and len(line) > 2:
+    # 1. Try to find a known brand name first
+    for line in clean:
+        if any(brand in line.lower() for brand in _GAS_BRANDS):
             name = line
             break
 
-    # Look for a line that looks like a street address
-    addr_pattern = re.compile(
-        r'\d+\s+\w+.*(st|ave|rd|dr|blvd|ln|way|hwy|route|pkwy|ct|pl|cir)',
-        re.IGNORECASE
-    )
-    for line in lines:
-        if addr_pattern.search(line) and line != name:
+    # 2. Fall back: first non-username, non-address line
+    if not name:
+        for line in clean:
+            if not looks_like_username(line) and not re.match(r'^\d+\s', line):
+                name = line
+                break
+
+    # 3. Find address: must start with a number (street address)
+    addr_pattern = re.compile(r'^\d+\s+\S')
+    for line in clean:
+        if addr_pattern.match(line) and line != name:
             address = line
             break
-
-    # If no street address found, use second non-price line as address
-    if not address:
-        count = 0
-        for line in lines:
-            if not re.match(r'^[\d\.\$]', line) and len(line) > 2:
-                count += 1
-                if count == 2:
-                    address = line
-                    break
 
     return name, address
 
