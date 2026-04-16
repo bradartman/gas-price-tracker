@@ -296,6 +296,12 @@
   fetch('/api/history').then(r => r.json()).then(rows => {
     if (rows.length > 0) btnExport.disabled = false;
   });
+
+  // Heartbeat — tells the server the browser tab is still open.
+  // When the tab closes, pings stop and the server shuts itself down.
+  function ping() { fetch('/api/ping', { method: 'POST' }).catch(() => {}); }
+  ping();
+  setInterval(ping, 5000);
 </script>
 
 </body>

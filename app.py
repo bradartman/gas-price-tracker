@@ -7,6 +7,7 @@ import csv
 import io
 import json
 import os
+import time
 import threading
 import webbrowser
 from datetime import datetime
@@ -23,6 +24,25 @@ from gas_tracker import (
 )
 
 app = Flask(__name__)
+
+# ── Browser-close watchdog ────────────────────────────────────────────────────
+_last_ping   = None   # set on first ping; None = browser not yet connected
+_PING_TIMEOUT = 12    # seconds without a ping before shutting down
+
+def _watchdog():
+    while True:
+        time.sleep(4)
+        if _last_ping is not None and time.time() - _last_ping > _PING_TIMEOUT:
+            print("\n  Browser closed — shutting down.", flush=True)
+            os._exit(0)
+
+threading.Thread(target=_watchdog, daemon=True).start()
+
+@app.route("/api/ping", methods=["POST"])
+def ping():
+    global _last_ping
+    _last_ping = time.time()
+    return "", 204
 
 
 @app.route("/")
